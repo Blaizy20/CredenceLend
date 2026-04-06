@@ -27,16 +27,16 @@ if (!function_exists('app_mail_settings')) {
         $system_name = trim((string) ($settings['system_name'] ?? 'CredenceLend'));
 
         $config = [
-            'transport' => 'phpmailer',
-            'host' => trim((string) app_env_value('MAIL_HOST', 'smtp.gmail.com')),
-            'port' => intval(app_env_value('MAIL_PORT', 465)),
-            'username' => trim((string) app_env_value('MAIL_USERNAME', 'alliah1530@gmail.com')),
-            'password' => (string) app_env_value('MAIL_PASSWORD', 'mjnz fexk mofy cgxw'),
-            'encryption' => strtolower((string) app_env_value('MAIL_ENCRYPTION', 'ssl')),
+            'transport'    => 'phpmailer',
+            'host'         => trim((string) app_env_value('MAIL_HOST', 'smtp.gmail.com')),
+            'port'         => intval(app_env_value('MAIL_PORT', 465)),
+            'username'     => trim((string) app_env_value('MAIL_USERNAME', 'alliah1530@gmail.com')),
+            'password'     => (string) app_env_value('MAIL_PASSWORD', 'mjnz fexk mofy cgxw'),
+            'encryption'   => strtolower((string) app_env_value('MAIL_ENCRYPTION', 'ssl')),
             'from_address' => trim((string) app_env_value('MAIL_FROM_ADDRESS', 'alliah1530@gmail.com')),
-            'from_name' => trim((string) app_env_value('MAIL_FROM_NAME', $system_name !== '' ? $system_name : 'CredenceLend')),
-            'reply_to' => trim((string) app_env_value('MAIL_REPLY_TO', 'alliah1530@gmail.com')),
-            'app_url' => rtrim((string) app_env_value('APP_URL', ''), '/'),
+            'from_name'    => trim((string) app_env_value('MAIL_FROM_NAME', $system_name !== '' ? $system_name : 'CredenceLend')),
+            'reply_to'     => trim((string) app_env_value('MAIL_REPLY_TO', 'alliah1530@gmail.com')),
+            'app_url'      => rtrim((string) app_env_value('APP_URL', ''), '/'),
         ];
 
         return $config;
@@ -56,8 +56,8 @@ if (!function_exists('app_public_url')) {
                 || strtolower((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')) === 'https'
             );
             $scheme = $https_enabled ? 'https' : 'http';
-            $host = (string) ($_SERVER['HTTP_HOST'] ?? 'localhost');
-            $base = $scheme . '://' . $host . rtrim(APP_BASE, '/');
+            $host   = (string) ($_SERVER['HTTP_HOST'] ?? 'localhost');
+            $base   = $scheme . '://' . $host . rtrim(APP_BASE, '/');
         }
 
         $url = $base;
@@ -94,18 +94,19 @@ if (!function_exists('app_send_html_mail')) {
             return ['ok' => false, 'error' => 'Invalid recipient email address.'];
         }
 
-        $config = array_merge(app_mail_settings(), $options);
+        $config    = array_merge(app_mail_settings(), $options);
         $text_body = $options['text_body'] ?? app_mail_plain_text($html_body);
 
         try {
             $mail = new PHPMailer(true);
             $mail->isSMTP();
-            $mail->Host = $config['host'];
-            $mail->Port = intval($config['port']);
+            $mail->Timeout  = 10; // fail fast instead of hanging 30s
+            $mail->Host     = $config['host'];
+            $mail->Port     = intval($config['port']);
             $mail->SMTPAuth = true;
             $mail->Username = $config['username'];
             $mail->Password = $config['password'];
-            $mail->CharSet = 'UTF-8';
+            $mail->CharSet  = 'UTF-8';
 
             if ($config['encryption'] === 'ssl') {
                 $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
@@ -121,7 +122,7 @@ if (!function_exists('app_send_html_mail')) {
             $mail->addAddress($to);
             $mail->isHTML(true);
             $mail->Subject = $subject;
-            $mail->Body = app_mail_normalize_body($html_body);
+            $mail->Body    = app_mail_normalize_body($html_body);
             $mail->AltBody = app_mail_normalize_body($text_body);
             $mail->send();
 
