@@ -373,26 +373,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['register_staff'])) {
           'username' => $username,
         ], $setup_token, $tenant_name);
 
-        if (!$mail_result['ok']) {
-          $conn->rollback();
-          $err = 'Registration failed because the invitation email could not be sent. ' . trim((string) ($mail_result['error'] ?? ''));
-        } else {
-          $conn->commit();
-
-          if ($role === 'ADMIN') {
-            log_system_activity('STAFF_CREATED', 'Admin owner account created: ' . $full_name . ' (' . $role . ')');
-          } else {
-            log_activity('STAFF_CREATED', 'Staff account created: ' . $full_name . ' (' . $role . ')');
-          }
-
-          $flash_message = $role === 'ADMIN'
-            ? "Admin owner account created. The CredenceLend setup email was sent successfully. This user must create their own password before signing in."
-            : "Staff account created successfully. The CredenceLend setup email was sent successfully. This user must create their own password before signing in.";
-
-          $redirect_with_flash(
-            'staff',
-            $flash_message
-          );
+$conn->commit();
+if ($role === 'ADMIN') {
+    log_system_activity('STAFF_CREATED', 'Admin owner account created: ' . $fullname . ' (' . $role . ')');
+} else {
+    log_activity('STAFF_CREATED', 'Staff account created: ' . $fullname . ' (' . $role . ')');
+}
+$flashMessage = $role === 'ADMIN'
+    ? 'Admin owner account created. The CredenceLend setup email was sent successfully. This user must create their own password before signing in.'
+    : 'Staff account created successfully. The CredenceLend setup email was sent successfully. This user must create their own password before signing in.';
+if (!$mailresult['ok']) {
+    error_log('Setup email failed for ' . $email . ': ' . ($mailresult['error'] ?? ''));
+    $flashMessage = 'Staff account created, but the setup email could not be sent. Please resend manually.';
+}
+redirectWithFlash('staff', $flashMessage);
         }
       }
     } catch (mysqli_sql_exception $e) {
