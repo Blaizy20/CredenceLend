@@ -4,28 +4,32 @@ require_once __DIR__ . '/../includes/loan_helpers.php';
 require_login();
 require_permission('view_settings');
 
-$settings_tenant_id = require_current_tenant_id();
+$global_settings_view = is_global_super_admin_view();
+$settings_tenant_id = $global_settings_view ? 0 : require_current_tenant_id();
 $message = '';
 $error = '';
-$logo_feature_access = current_tenant_feature_access('logo_upload', $settings_tenant_id);
-$theme_feature_access = current_tenant_feature_access('theme_customization', $settings_tenant_id);
-$can_upload_logo = !empty($logo_feature_access['allowed']);
-$can_customize_theme = !empty($theme_feature_access['allowed']);
+$logo_feature_access = $global_settings_view
+  ? ['allowed' => true, 'message' => '']
+  : current_tenant_feature_access('logo_upload', $settings_tenant_id);
+$theme_feature_access = $global_settings_view
+  ? ['allowed' => true, 'message' => '']
+  : current_tenant_feature_access('theme_customization', $settings_tenant_id);
+$can_upload_logo = $global_settings_view || !empty($logo_feature_access['allowed']);
+$can_customize_theme = $global_settings_view || !empty($theme_feature_access['allowed']);
 $branding_feature_notices = [];
-if (!$can_upload_logo) {
+if (!$global_settings_view && !$can_upload_logo) {
   $branding_feature_notices[] = $logo_feature_access['message'];
 }
-if (!$can_customize_theme) {
+if (!$global_settings_view && !$can_customize_theme) {
   $branding_feature_notices[] = $theme_feature_access['message'];
 }
-$current_settings_record = fetch_one(q(
-  "SELECT setting_id, system_name, logo_path, primary_color
-   FROM system_settings
-   WHERE tenant_id=?
-   LIMIT 1",
-  "i",
-  [$settings_tenant_id]
-));
+$settings = get_system_settings($settings_tenant_id);
+$current_settings_record = $settings;
+$settings_scope_kicker = $global_settings_view ? 'Main System Branding' : 'Tenant Branding';
+$settings_scope_description = $global_settings_view
+  ? 'Manage the global system name, default login branding, primary color, and logo used outside tenant-specific workspaces.'
+  : 'Manage the tenant-facing system name, primary color, and logo using the same dark interface treatment used across the rest of the staff workspace.';
+$settings_page_title = $global_settings_view ? 'Main System Settings' : 'Tenant Settings';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   require_post_csrf();
@@ -96,22 +100,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
           ? $primary_color
           : ($current_settings_record['primary_color'] ?? app_default_primary_color());
 
-        if ($current_settings_record && isset($current_settings_record['setting_id'])) {
-          q(
-            "UPDATE system_settings SET system_name=?, logo_path=?, primary_color=? WHERE tenant_id=?",
-            "sssi",
-            [$system_name, $resolved_logo_path, $resolved_primary_color, $settings_tenant_id]
-          );
-        } else {
-          q(
-            "INSERT INTO system_settings (tenant_id, system_name, logo_path, primary_color) VALUES (?, ?, ?, ?)",
-            "isss",
-            [$settings_tenant_id, $system_name, $resolved_logo_path, $resolved_primary_color]
-          );
+        if (!save_system_settings($system_name, $resolved_logo_path, $resolved_primary_color, $settings_tenant_id)) {
+          throw new RuntimeException('Unable to save the selected settings scope.');
         }
 
-        clear_system_settings_cache($settings_tenant_id);
         $message = 'Settings updated successfully.';
+        $settings = get_system_settings($settings_tenant_id);
+        $current_settings_record = $settings;
       } catch (Exception $e) {
         $error = 'Database error: ' . $e->getMessage();
         error_log("Settings update error: " . $e->getMessage());
@@ -120,7 +115,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   }
 }
 
-$settings = get_system_settings($settings_tenant_id);
 $can_view_role_permissions = current_role() === 'SUPER_ADMIN';
 $role_permissions_map = [];
 $role_permission_labels = [
@@ -166,7 +160,7 @@ if ($can_view_role_permissions) {
   }
 }
 
-$title = "Manager Settings";
+$title = $settings_page_title;
 $active = "settings";
 include __DIR__ . '/_layout_top.php';
 ?>
@@ -466,9 +460,9 @@ include __DIR__ . '/_layout_top.php';
 <div class="settings-shell">
   <section class="settings-hero">
     <div class="settings-card settings-card-full">
-      <span class="settings-kicker">Tenant Branding</span>
+      <span class="settings-kicker"><?= htmlspecialchars($settings_scope_kicker) ?></span>
       <h2>System Settings</h2>
-      <p>Manage the tenant-facing system name, primary color, and logo using the same dark interface treatment used across the rest of the staff workspace.</p>
+      <p><?= htmlspecialchars($settings_scope_description) ?></p>
     </div>
   </section>
 
