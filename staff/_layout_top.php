@@ -3,6 +3,7 @@ require_once __DIR__ . '/../includes/auth.php';
 $user = current_user();
 $settings = get_system_settings();
 $active_tenant_name = '';
+$brand_title = $settings['system_name'] ?? 'CredenceLend';
 $owned_tenant_count = is_admin_owner() ? count(user_owned_tenants($_SESSION['user_id'] ?? 0, true)) : 0;
 $can_switch_tenant = is_super_admin() || $owned_tenant_count > 1;
 $can_view_settings = can_access('view_settings');
@@ -76,6 +77,7 @@ $primary_soft_strong = "rgba({$primary_red}, {$primary_green}, {$primary_blue}, 
 
 if (is_global_super_admin_view()) {
   $active_tenant_name = 'All Tenants';
+  $brand_title = 'All Tenants';
 } elseif (current_tenant_id()) {
   $active_tenant = fetch_one(q(
     "SELECT COALESCE(display_name, tenant_name) AS tenant_name FROM tenants WHERE tenant_id=? LIMIT 1",
@@ -127,7 +129,7 @@ if (is_global_super_admin_view()) {
   <div class="brand">
     <img src="<?php echo htmlspecialchars($settings['logo_path'] ?? APP_BASE . '/assets/img/new-logo.jfif'); ?>" alt="Logo"/>
     <div>
-      <div style="font-weight:800;line-height:1"><?= htmlspecialchars($settings['system_name'] ?? 'CredenceLend') ?></div>
+      <div style="font-weight:800;line-height:1"><?= htmlspecialchars($brand_title) ?></div>
       <div class="small" style="color:#fde8ec"><?php 
         $role = $_SESSION['role'] ?? '';
         $roleNames = [
