@@ -983,6 +983,12 @@ function get_system_settings($tenant_id = null) {
 
     $result = default_system_settings();
 
+    // Super admin global view (no tenant scope): always return CredenceLend defaults
+    if ($tenant_id === 0 || $tenant_id === null) {
+        $_SESSION[$cache_key] = $result;
+        return $result;
+    }
+
     try {
         $conn = db();
         $check_table = $conn->query("SHOW TABLES LIKE 'system_settings'");
