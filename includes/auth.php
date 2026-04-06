@@ -180,7 +180,7 @@ function clear_password_setup_state() {
  */
 function current_user() {
     if (!is_logged_in()) return null;
-    
+
     try {
         $authService = new AuthService();
         $user = $authService->getUserById($_SESSION['user_id']);
@@ -233,7 +233,7 @@ function require_login_customer() {
  */
 function require_roles($roles) {
     require_login();
-    
+
     $userRole = $_SESSION['role'] ?? '';
     if (!in_array($userRole, $roles, true)) {
         http_response_code(403);
@@ -941,7 +941,7 @@ function system_settings_cache_key($tenant_id = null) {
 }
 
 function clear_system_settings_cache($tenant_id = null) {
-    if ($tenant_id !== null && intval($tenant_id) > 0) {
+    if ($tenant_id !== null) {
         unset($_SESSION[system_settings_cache_key($tenant_id)]);
         return;
     }
@@ -973,6 +973,104 @@ function resolve_settings_tenant_id($tenant_id = null) {
     return requested_tenant_id();
 }
 
+function ensure_global_system_settings_table() {
+    static $ensured = null;
+    if ($ensured !== null) {
+        return $ensured;
+    }
+
+    try {
+        $conn = db();
+        $conn->query(
+            "CREATE TABLE IF NOT EXISTS global_system_settings (
+                setting_id INT AUTO_INCREMENT PRIMARY KEY,
+                system_name VARCHAR(255) NOT NULL DEFAULT 'CredenceLend',
+                logo_path VARCHAR(500) NULL,
+                primary_color VARCHAR(7) NOT NULL DEFAULT '#2c3ec5',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        );
+
+        $existing = fetch_one(q("SELECT setting_id FROM global_system_settings ORDER BY setting_id ASC LIMIT 1"));
+        if (!$existing) {
+            $seed = null;
+
+            $check_table = $conn->query("SHOW TABLES LIKE 'system_settings'");
+            if ($check_table && $check_table->num_rows > 0) {
+                $seed = fetch_one(q("SELECT system_name, logo_path, primary_color FROM system_settings ORDER BY setting_id ASC LIMIT 1"));
+            }
+
+            $seed = array_merge(default_system_settings(), array_filter((array)$seed, static function ($value) {
+                return $value !== null && $value !== '';
+            }));
+
+            q(
+                "INSERT INTO global_system_settings (system_name, logo_path, primary_color) VALUES (?, ?, ?)",
+                "sss",
+                [
+                    $seed['system_name'] ?? default_system_settings()['system_name'],
+                    $seed['logo_path'] ?? default_system_settings()['logo_path'],
+                    $seed['primary_color'] ?? default_system_settings()['primary_color'],
+                ]
+            );
+        }
+
+        $ensured = true;
+        return true;
+    } catch (Exception $e) {
+        error_log("Global system settings table error: " . $e->getMessage());
+        $ensured = false;
+        return false;
+    }
+}
+
+function save_system_settings($system_name, $logo_path, $primary_color, $tenant_id = null) {
+    $tenant_id = intval($tenant_id ?? 0);
+
+    if ($tenant_id > 0) {
+        $existing = fetch_one(q("SELECT setting_id FROM system_settings WHERE tenant_id=? LIMIT 1", "i", [$tenant_id]));
+        if ($existing) {
+            q(
+                "UPDATE system_settings SET system_name=?, logo_path=?, primary_color=? WHERE tenant_id=?",
+                "sssi",
+                [$system_name, $logo_path, $primary_color, $tenant_id]
+            );
+        } else {
+            q(
+                "INSERT INTO system_settings (tenant_id, system_name, logo_path, primary_color) VALUES (?, ?, ?, ?)",
+                "isss",
+                [$tenant_id, $system_name, $logo_path, $primary_color]
+            );
+        }
+
+        clear_system_settings_cache($tenant_id);
+        return true;
+    }
+
+    if (!ensure_global_system_settings_table()) {
+        return false;
+    }
+
+    $existing = fetch_one(q("SELECT setting_id FROM global_system_settings ORDER BY setting_id ASC LIMIT 1"));
+    if ($existing) {
+        q(
+            "UPDATE global_system_settings SET system_name=?, logo_path=?, primary_color=? WHERE setting_id=?",
+            "sssi",
+            [$system_name, $logo_path, $primary_color, intval($existing['setting_id'])]
+        );
+    } else {
+        q(
+            "INSERT INTO global_system_settings (system_name, logo_path, primary_color) VALUES (?, ?, ?)",
+            "sss",
+            [$system_name, $logo_path, $primary_color]
+        );
+    }
+
+    clear_system_settings_cache(0);
+    return true;
+}
+
 function get_system_settings($tenant_id = null) {
     $tenant_id = resolve_settings_tenant_id($tenant_id);
     $cache_key = system_settings_cache_key($tenant_id);
@@ -982,12 +1080,6 @@ function get_system_settings($tenant_id = null) {
     }
 
     $result = default_system_settings();
-
-    // Super admin global view (no tenant scope): always return CredenceLend defaults
-    if ($tenant_id === 0 || $tenant_id === null) {
-        $_SESSION[$cache_key] = $result;
-        return $result;
-    }
 
     try {
         $conn = db();
@@ -1016,9 +1108,18 @@ function get_system_settings($tenant_id = null) {
                 }
             }
         } else {
-            $stmt = $conn->prepare("SELECT system_name, logo_path, primary_color FROM system_settings LIMIT 1");
-            $stmt->execute();
-            $settings = $stmt->get_result()->fetch_assoc();
+            $settings = null;
+            if (ensure_global_system_settings_table()) {
+                $stmt = $conn->prepare("SELECT system_name, logo_path, primary_color FROM global_system_settings ORDER BY setting_id ASC LIMIT 1");
+                $stmt->execute();
+                $settings = $stmt->get_result()->fetch_assoc();
+            }
+
+            if (!$settings) {
+                $stmt = $conn->prepare("SELECT system_name, logo_path, primary_color FROM system_settings ORDER BY setting_id ASC LIMIT 1");
+                $stmt->execute();
+                $settings = $stmt->get_result()->fetch_assoc();
+            }
         }
 
         if ($settings) {
@@ -1050,7 +1151,7 @@ function get_system_settings($tenant_id = null) {
  */
 function update_system_setting($key, $value) {
     try {
-        $tenant_id = require_current_tenant_id();
+        $tenant_id = is_global_super_admin_view() ? 0 : require_current_tenant_id();
         $allowed_keys = ['system_name', 'logo_path', 'primary_color'];
         if (!in_array($key, $allowed_keys, true)) {
             return false;
@@ -1059,23 +1160,12 @@ function update_system_setting($key, $value) {
         $settings = get_system_settings($tenant_id);
         $settings[$key] = $value;
 
-        $existing = fetch_one(q("SELECT setting_id FROM system_settings WHERE tenant_id=? LIMIT 1", "i", [$tenant_id]));
-        if ($existing) {
-            q(
-                "UPDATE system_settings SET system_name=?, logo_path=?, primary_color=? WHERE tenant_id=?",
-                "sssi",
-                [$settings['system_name'], $settings['logo_path'], $settings['primary_color'], $tenant_id]
-            );
-        } else {
-            q(
-                "INSERT INTO system_settings (tenant_id, system_name, logo_path, primary_color) VALUES (?, ?, ?, ?)",
-                "isss",
-                [$tenant_id, $settings['system_name'], $settings['logo_path'], $settings['primary_color']]
-            );
-        }
-
-        clear_system_settings_cache($tenant_id);
-        return true;
+        return save_system_settings(
+            $settings['system_name'],
+            $settings['logo_path'],
+            $settings['primary_color'],
+            $tenant_id
+        );
     } catch (Exception $e) {
         error_log("Update setting error: " . $e->getMessage());
         return false;
@@ -1088,17 +1178,17 @@ function update_system_setting($key, $value) {
  */
 function check_session_timeout($timeout = 1800) {
     if (!is_logged_in()) return;
-    
+
     $currentTime = time();
     $lastActivity = $_SESSION['last_activity'] ?? $currentTime;
-    
+
     if (($currentTime - $lastActivity) > $timeout) {
         logout_user();
         $_SESSION['timeout_message'] = "Your session has expired. Please login again.";
         header("Location: " . APP_BASE . "/staff/login.php");
         exit;
     }
-    
+
     $_SESSION['last_activity'] = $currentTime;
 }
 
