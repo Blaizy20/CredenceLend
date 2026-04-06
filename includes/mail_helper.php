@@ -22,20 +22,19 @@ if (!function_exists('app_mail_settings')) {
             return $config;
         }
 
-        $settings = function_exists('get_system_settings') ? get_system_settings() : [];
-        $host = preg_replace('/:\d+$/', '', (string) ($_SERVER['HTTP_HOST'] ?? 'localhost'));
+        $settings    = function_exists('get_system_settings') ? get_system_settings() : [];
         $system_name = trim((string) ($settings['system_name'] ?? 'CredenceLend'));
 
         $config = [
             'transport'    => 'phpmailer',
-            'host'         => trim((string) app_env_value('MAIL_HOST', 'smtp.gmail.com')),
-            'port'         => intval(app_env_value('MAIL_PORT', 465)),
-            'username'     => trim((string) app_env_value('MAIL_USERNAME', 'alliah1530@gmail.com')),
-            'password'     => (string) app_env_value('MAIL_PASSWORD', 'mjnz fexk mofy cgxw'),
-            'encryption'   => strtolower((string) app_env_value('MAIL_ENCRYPTION', 'ssl')),
-            'from_address' => trim((string) app_env_value('MAIL_FROM_ADDRESS', 'alliah1530@gmail.com')),
+            'host'         => trim((string) app_env_value('MAIL_HOST', 'smtp-relay.brevo.com')),
+            'port'         => intval(app_env_value('MAIL_PORT', 587)),
+            'username'     => trim((string) app_env_value('MAIL_USERNAME', '')),
+            'password'     => (string) app_env_value('MAIL_PASSWORD', ''),
+            'encryption'   => strtolower((string) app_env_value('MAIL_ENCRYPTION', 'tls')),
+            'from_address' => trim((string) app_env_value('MAIL_FROM_ADDRESS', '')),
             'from_name'    => trim((string) app_env_value('MAIL_FROM_NAME', $system_name !== '' ? $system_name : 'CredenceLend')),
-            'reply_to'     => trim((string) app_env_value('MAIL_REPLY_TO', 'alliah1530@gmail.com')),
+            'reply_to'     => trim((string) app_env_value('MAIL_REPLY_TO', '')),
             'app_url'      => rtrim((string) app_env_value('APP_URL', ''), '/'),
         ];
 
@@ -96,40 +95,54 @@ if (!function_exists('app_send_html_mail')) {
 
         $config    = array_merge(app_mail_settings(), $options);
         $text_body = $options['text_body'] ?? app_mail_plain_text($html_body);
+        $api_key   = (string) app_env_value('BREVO_API_KEY', '');
 
-        try {
-            $mail = new PHPMailer(true);
-            $mail->isSMTP();
-            $mail->Timeout  = 10; // fail fast instead of hanging 30s
-            $mail->Host     = $config['host'];
-            $mail->Port     = intval($config['port']);
-            $mail->SMTPAuth = true;
-            $mail->Username = $config['username'];
-            $mail->Password = $config['password'];
-            $mail->CharSet  = 'UTF-8';
-
-            if ($config['encryption'] === 'ssl') {
-                $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
-            } else {
-                $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-            }
-
-            $mail->setFrom($config['from_address'], $config['from_name']);
-            if (!empty($config['reply_to'])) {
-                $mail->addReplyTo($config['reply_to'], $config['from_name']);
-            }
-
-            $mail->addAddress($to);
-            $mail->isHTML(true);
-            $mail->Subject = $subject;
-            $mail->Body    = app_mail_normalize_body($html_body);
-            $mail->AltBody = app_mail_normalize_body($text_body);
-            $mail->send();
-
-            return ['ok' => true, 'error' => ''];
-        } catch (Exception $e) {
-            error_log('Mail send failed: ' . $e->getMessage());
-            return ['ok' => false, 'error' => $e->getMessage()];
+        if ($api_key === '') {
+            return ['ok' => false, 'error' => 'BREVO_API_KEY is not set.'];
         }
+
+        $payload = json_encode([
+            'sender'      => [
+                'name'  => $config['from_name'],
+                'email' => $config['from_address'],
+            ],
+            'to'          => [['email' => $to]],
+            'replyTo'     => ['email' => $config['reply_to'] ?: $config['from_address']],
+            'subject'     => $subject,
+            'htmlContent' => app_mail_normalize_body($html_body),
+            'textContent' => app_mail_normalize_body($text_body),
+        ]);
+
+        $ch = curl_init('https://api.brevo.com/v3/smtp/email');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => $payload,
+            CURLOPT_TIMEOUT        => 10,
+            CURLOPT_HTTPHEADER     => [
+                'accept: application/json',
+                'content-type: application/json',
+                'api-key: ' . $api_key,
+            ],
+        ]);
+
+        $response   = curl_exec($ch);
+        $http_code  = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_error = curl_error($ch);
+        curl_close($ch);
+
+        if ($curl_error) {
+            error_log('Mail send failed: ' . $curl_error);
+            return ['ok' => false, 'error' => $curl_error];
+        }
+
+        if ($http_code >= 200 && $http_code < 300) {
+            return ['ok' => true, 'error' => ''];
+        }
+
+        $decoded = json_decode($response, true);
+        $error   = $decoded['message'] ?? ('HTTP ' . $http_code);
+        error_log('Mail send failed: ' . $error);
+        return ['ok' => false, 'error' => $error];
     }
 }
