@@ -1,0 +1,476 @@
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS=0;
+
+DROP TABLE IF EXISTS payment_edit_otp;
+DROP TABLE IF EXISTS api_auth_tokens;
+DROP TABLE IF EXISTS restore_logs;
+DROP TABLE IF EXISTS backup_logs;
+DROP TABLE IF EXISTS system_settings;
+DROP TABLE IF EXISTS interest_rate_history;
+DROP TABLE IF EXISTS money_release_vouchers;
+DROP TABLE IF EXISTS activity_logs;
+DROP TABLE IF EXISTS payments;
+DROP TABLE IF EXISTS requirements;
+DROP TABLE IF EXISTS loans;
+DROP TABLE IF EXISTS customers;
+DROP TABLE IF EXISTS tenant_admins;
+DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS tenants;
+DROP TABLE IF EXISTS plans;
+
+-- Subscription plan schema block.
+-- This consolidated install file mirrors:
+--   setup/20260403_subscription_plan_schema.sql
+CREATE TABLE plans (
+  plan_id INT AUTO_INCREMENT PRIMARY KEY,
+  code VARCHAR(30) NOT NULL,
+  name VARCHAR(120) NOT NULL,
+  monthly_price DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+  description TEXT NULL,
+  max_total_users INT NOT NULL DEFAULT 0,
+  max_admins INT NOT NULL DEFAULT 0,
+  max_managers INT NOT NULL DEFAULT 0,
+  max_credit_investigators INT NOT NULL DEFAULT 0,
+  max_loan_officers INT NOT NULL DEFAULT 0,
+  max_cashiers INT NOT NULL DEFAULT 0,
+  feature_reports TINYINT(1) NOT NULL DEFAULT 0,
+  feature_exports TINYINT(1) NOT NULL DEFAULT 0,
+  feature_audit_logs TINYINT(1) NOT NULL DEFAULT 0,
+  feature_logo_upload TINYINT(1) NOT NULL DEFAULT 0,
+  feature_theme_customization TINYINT(1) NOT NULL DEFAULT 0,
+  feature_editable_receipts TINYINT(1) NOT NULL DEFAULT 0,
+  feature_editable_vouchers TINYINT(1) NOT NULL DEFAULT 0,
+  feature_custom_loan_config TINYINT(1) NOT NULL DEFAULT 0,
+  feature_advanced_reports TINYINT(1) NOT NULL DEFAULT 0,
+  feature_priority_support TINYINT(1) NOT NULL DEFAULT 0,
+  feature_system_name_customization TINYINT(1) NOT NULL DEFAULT 1,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_plan_code (code),
+  KEY idx_plans_active (is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tenants (
+  tenant_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_name VARCHAR(120) NOT NULL UNIQUE,
+  subdomain VARCHAR(50) NOT NULL UNIQUE,
+  display_name VARCHAR(120) NOT NULL,
+  tenant_status ENUM('PENDING','ACTIVE','INACTIVE','SUSPENDED','REJECTED') NOT NULL DEFAULT 'PENDING',
+  plan_code ENUM('BASIC','PROFESSIONAL','ENTERPRISE') NOT NULL DEFAULT 'BASIC',
+  plan_id INT NULL,
+  subscription_status ENUM('TRIAL','ACTIVE','PAST_DUE','SUSPENDED','CANCELLED','EXPIRED') NOT NULL DEFAULT 'ACTIVE',
+  subscription_started_at DATETIME NULL,
+  subscription_expires_at DATETIME NULL,
+  logo_path VARCHAR(500) NULL,
+  primary_color VARCHAR(7) DEFAULT '#2c3ec5',
+  is_active TINYINT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_tenants_status (tenant_status),
+  KEY idx_tenants_plan (plan_code),
+  KEY idx_tenants_plan_id (plan_id),
+  KEY idx_tenants_subscription (subscription_status, subscription_expires_at),
+  CONSTRAINT fk_tenants_plan FOREIGN KEY (plan_id) REFERENCES plans(plan_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE users (
+  user_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NULL,
+  username VARCHAR(50) NOT NULL,
+  password_hash VARCHAR(255) NOT NULL,
+  reset_token VARCHAR(255) NULL,
+  reset_token_expiry DATETIME NULL,
+  full_name VARCHAR(120) NOT NULL,
+  role ENUM('SUPER_ADMIN','ADMIN','TENANT','MANAGER','CREDIT_INVESTIGATOR','LOAN_OFFICER','CASHIER','CUSTOMER') NOT NULL,
+  contact_no VARCHAR(30) NULL,
+  email VARCHAR(120) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  is_active TINYINT DEFAULT 1,
+  UNIQUE KEY unique_username (username),
+  UNIQUE KEY unique_tenant_username (tenant_id, username),
+  KEY idx_users_role (role),
+  KEY idx_users_tenant_role (tenant_id, role),
+  CONSTRAINT fk_users_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE tenant_admins (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  user_id INT NOT NULL,
+  is_primary_owner TINYINT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_tenant_owner (tenant_id),
+  KEY idx_tenant_admin_user (user_id),
+  KEY idx_tenant_admin_primary (tenant_id, is_primary_owner),
+  CONSTRAINT fk_tenant_admins_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_tenant_admins_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE customers (
+  customer_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  user_id INT NULL,
+  username VARCHAR(50) NULL,
+  customer_no VARCHAR(30) NOT NULL,
+  first_name VARCHAR(60) NOT NULL,
+  last_name VARCHAR(60) NOT NULL,
+  contact_no VARCHAR(30) NOT NULL,
+  email VARCHAR(120) NULL,
+  province VARCHAR(80) NULL,
+  city VARCHAR(80) NULL,
+  barangay VARCHAR(80) NULL,
+  street VARCHAR(120) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  is_active TINYINT DEFAULT 1,
+  UNIQUE KEY unique_tenant_customer_no (tenant_id, customer_no),
+  CONSTRAINT fk_customers_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_customers_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE loans (
+  loan_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  reference_no VARCHAR(40) NOT NULL,
+  customer_id INT NOT NULL,
+  principal_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+  interest_rate DECIMAL(5,2) NOT NULL DEFAULT 0,
+  payment_term VARCHAR(20) NULL,
+  term_months INT NOT NULL DEFAULT 0,
+  total_payable DECIMAL(12,2) NULL,
+  remaining_balance DECIMAL(12,2) NULL,
+  status ENUM('PENDING','CI_REVIEWED','APPROVED','DENIED','ACTIVE','OVERDUE','CLOSED') NOT NULL DEFAULT 'PENDING',
+  submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  ci_by INT NULL,
+  ci_at TIMESTAMP NULL,
+  manager_by INT NULL,
+  manager_at TIMESTAMP NULL,
+  approved_at TIMESTAMP NULL,
+  loan_officer_id INT NULL,
+  activated_at TIMESTAMP NULL,
+  due_date DATE NULL,
+  denial_reason TEXT NULL,
+  notes TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  is_active TINYINT DEFAULT 1,
+  UNIQUE KEY unique_tenant_reference_no (tenant_id, reference_no),
+  KEY idx_loans_status (status),
+  KEY idx_loans_customer_id (customer_id),
+  CONSTRAINT fk_loans_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_loans_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE CASCADE,
+  CONSTRAINT fk_loans_ci FOREIGN KEY (ci_by) REFERENCES users(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_loans_manager FOREIGN KEY (manager_by) REFERENCES users(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_loans_officer FOREIGN KEY (loan_officer_id) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE requirements (
+  requirement_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  loan_id INT NOT NULL,
+  requirement_code VARCHAR(50) NOT NULL,
+  requirement_name VARCHAR(120) NOT NULL,
+  file_path VARCHAR(500) NULL,
+  uploaded_by_role ENUM('CUSTOMER','STAFF') NOT NULL DEFAULT 'STAFF',
+  uploaded_by_user INT NULL,
+  uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  notes TEXT NULL,
+  is_active TINYINT DEFAULT 1,
+  UNIQUE KEY unique_tenant_loan_req_code (tenant_id, loan_id, requirement_code),
+  KEY idx_requirements_loan_id (loan_id),
+  CONSTRAINT fk_requirements_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_requirements_loan FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE CASCADE,
+  CONSTRAINT fk_requirements_user FOREIGN KEY (uploaded_by_user) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE payments (
+  payment_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  loan_id INT NOT NULL,
+  amount DECIMAL(12,2) NOT NULL,
+  payment_date DATE NOT NULL,
+  method ENUM('CASH','CHEQUE','GCASH','DIGITAL','OTHER','BANK') NOT NULL DEFAULT 'CASH',
+  cheque_number VARCHAR(50) NULL,
+  cheque_date DATE NULL,
+  bank_name VARCHAR(120) NULL,
+  account_holder VARCHAR(120) NULL,
+  bank_reference_no VARCHAR(50) NULL,
+  gcash_reference_no VARCHAR(50) NULL,
+  or_no VARCHAR(40) NOT NULL,
+  loan_officer_id INT NULL,
+  received_by INT NULL,
+  notes TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_tenant_or_no (tenant_id, or_no),
+  KEY idx_payments_payment_date (payment_date),
+  KEY idx_payments_loan_id (loan_id),
+  CONSTRAINT fk_pay_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_pay_loan FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE CASCADE,
+  CONSTRAINT fk_pay_officer FOREIGN KEY (loan_officer_id) REFERENCES users(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_pay_user FOREIGN KEY (received_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE activity_logs (
+  log_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NULL,
+  user_id INT NULL,
+  user_role VARCHAR(50) NOT NULL,
+  action VARCHAR(100) NOT NULL,
+  description TEXT NOT NULL,
+  loan_id INT NULL,
+  customer_id INT NULL,
+  reference_no VARCHAR(40) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_activity_created_at (created_at),
+  KEY idx_activity_user_id (user_id),
+  KEY idx_activity_action (action),
+  KEY idx_activity_loan_id (loan_id),
+  CONSTRAINT fk_activity_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_activity_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_activity_loan FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE SET NULL,
+  CONSTRAINT fk_activity_customer FOREIGN KEY (customer_id) REFERENCES customers(customer_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE money_release_vouchers (
+  voucher_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  loan_id INT NOT NULL,
+  voucher_no VARCHAR(40) NOT NULL,
+  release_date DATE NOT NULL,
+  check_no VARCHAR(40) NULL,
+  check_amount DECIMAL(12,2) NULL,
+  explanation TEXT NULL,
+  prepared_by INT NULL,
+  approved_by INT NULL,
+  audited_by INT NULL,
+  received_by_name VARCHAR(120) NULL,
+  received_by_date DATE NULL,
+  voucher_data LONGTEXT NULL,
+  status ENUM('DRAFT','RELEASED','CANCELLED') NOT NULL DEFAULT 'DRAFT',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_tenant_voucher_no (tenant_id, voucher_no),
+  KEY idx_voucher_loan_id (loan_id),
+  KEY idx_voucher_no (voucher_no),
+  KEY idx_voucher_status (status),
+  CONSTRAINT fk_voucher_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_voucher_loan FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE CASCADE,
+  CONSTRAINT fk_voucher_prepared FOREIGN KEY (prepared_by) REFERENCES users(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_voucher_approved FOREIGN KEY (approved_by) REFERENCES users(user_id) ON DELETE SET NULL,
+  CONSTRAINT fk_voucher_audited FOREIGN KEY (audited_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE interest_rate_history (
+  history_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  loan_id INT NOT NULL,
+  old_rate DECIMAL(5,2) NOT NULL,
+  new_rate DECIMAL(5,2) NOT NULL,
+  changed_by INT NULL,
+  changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_irh_loan_id (loan_id),
+  CONSTRAINT fk_irh_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE,
+  CONSTRAINT fk_irh_loan FOREIGN KEY (loan_id) REFERENCES loans(loan_id) ON DELETE CASCADE,
+  CONSTRAINT fk_irh_user FOREIGN KEY (changed_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE system_settings (
+  setting_id INT AUTO_INCREMENT PRIMARY KEY,
+  tenant_id INT NOT NULL,
+  system_name VARCHAR(255) NOT NULL DEFAULT 'CredenceLend',
+  logo_path VARCHAR(500),
+  primary_color VARCHAR(7) NOT NULL DEFAULT '#2c3ec5',
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_tenant_setting (tenant_id),
+  CONSTRAINT fk_settings_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(tenant_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE backup_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  filename VARCHAR(255) NOT NULL,
+  backup_type ENUM('MANUAL','RESTORE_POINT') NOT NULL DEFAULT 'MANUAL',
+  restore_label VARCHAR(255) NULL,
+  is_restore_point TINYINT(1) NOT NULL DEFAULT 0,
+  status ENUM('RUNNING','SUCCESS','FAILED') NOT NULL DEFAULT 'RUNNING',
+  details TEXT NULL,
+  file_size BIGINT NULL,
+  requested_by INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME NULL,
+  KEY idx_backup_logs_status (status),
+  KEY idx_backup_logs_type (backup_type, is_restore_point),
+  KEY idx_backup_logs_created_at (created_at),
+  KEY idx_backup_logs_requested_by (requested_by),
+  CONSTRAINT fk_backup_logs_user FOREIGN KEY (requested_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE restore_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  backup_log_id INT NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  restored_by INT NULL,
+  status ENUM('RUNNING','SUCCESS','FAILED') NOT NULL DEFAULT 'RUNNING',
+  details TEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  completed_at DATETIME NULL,
+  KEY idx_restore_logs_status (status),
+  KEY idx_restore_logs_backup (backup_log_id),
+  KEY idx_restore_logs_created_at (created_at),
+  CONSTRAINT fk_restore_logs_backup FOREIGN KEY (backup_log_id) REFERENCES backup_logs(id) ON DELETE CASCADE,
+  CONSTRAINT fk_restore_logs_user FOREIGN KEY (restored_by) REFERENCES users(user_id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE api_auth_tokens (
+  token_id INT AUTO_INCREMENT PRIMARY KEY,
+  token_hash CHAR(64) NOT NULL,
+  user_id INT NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  revoked_at DATETIME NULL,
+  UNIQUE KEY unique_token_hash (token_hash),
+  KEY idx_api_tokens_user (user_id),
+  KEY idx_api_tokens_expiry (expires_at),
+  CONSTRAINT fk_api_tokens_user FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE payment_edit_otp (
+  otp_id INT AUTO_INCREMENT PRIMARY KEY,
+  payment_id INT NOT NULL,
+  user_id INT NOT NULL,
+  otp_code VARCHAR(6) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  expires_at DATETIME NOT NULL,
+  is_used TINYINT DEFAULT 0,
+  verified_at DATETIME NULL,
+  KEY idx_payment_user (payment_id, user_id),
+  KEY idx_payment_otp_expires (expires_at),
+  CONSTRAINT fk_payment_otp FOREIGN KEY (payment_id) REFERENCES payments(payment_id) ON DELETE CASCADE,
+  CONSTRAINT fk_user_otp FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Subscription plan seed block.
+-- This consolidated install file mirrors:
+--   setup/20260403_subscription_plan_seed.sql
+INSERT INTO plans (
+  code,
+  name,
+  monthly_price,
+  description,
+  max_total_users,
+  max_admins,
+  max_managers,
+  max_credit_investigators,
+  max_loan_officers,
+  max_cashiers,
+  feature_reports,
+  feature_exports,
+  feature_audit_logs,
+  feature_logo_upload,
+  feature_theme_customization,
+  feature_editable_receipts,
+  feature_editable_vouchers,
+  feature_custom_loan_config,
+  feature_advanced_reports,
+  feature_priority_support,
+  feature_system_name_customization,
+  is_active
+) VALUES
+(
+  'BASIC',
+  'Basic',
+  999.00,
+  'Starter plan for small lending teams with core operations only.',
+  6,
+  1,
+  1,
+  1,
+  2,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  1
+),
+(
+  'PROFESSIONAL',
+  'Professional',
+  1499.00,
+  'Growth plan with branding, exports, and editable receipt and voucher support.',
+  15,
+  1,
+  2,
+  2,
+  7,
+  3,
+  1,
+  1,
+  0,
+  0,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  1,
+  1
+),
+(
+  'ENTERPRISE',
+  'Enterprise',
+  1999.00,
+  'Full feature plan with audit visibility and advanced loan configuration.',
+  30,
+  1,
+  4,
+  4,
+  15,
+  6,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1
+);
+
+INSERT INTO users (
+  tenant_id,
+  username,
+  password_hash,
+  full_name,
+  role,
+  contact_no,
+  email,
+  is_active
+) VALUES (
+  NULL,
+  'admin',
+  '$2y$10$yMa4cQxzEvHF2jzoR31gsuMRA8fmecaIt9jVi62gaGbYQNLphVH5i',
+  'System Super Admin',
+  'SUPER_ADMIN',
+  NULL,
+  'superadmin@localhost',
+  1
+);
+
+SET FOREIGN_KEY_CHECKS=1;
