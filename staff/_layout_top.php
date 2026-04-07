@@ -4,6 +4,7 @@ $user = current_user();
 $settings = get_system_settings();
 $active_tenant_name = '';
 $brand_title = $settings['system_name'] ?? 'CredenceLend';
+$active_scope_label = 'Active Tenant';
 $owned_tenant_count = is_admin_owner() ? count(user_owned_tenants($_SESSION['user_id'] ?? 0, true)) : 0;
 $can_switch_tenant = is_super_admin() || $owned_tenant_count > 1;
 $can_view_settings = can_access('view_settings');
@@ -76,8 +77,8 @@ $primary_soft = "rgba({$primary_red}, {$primary_green}, {$primary_blue}, 0.08)";
 $primary_soft_strong = "rgba({$primary_red}, {$primary_green}, {$primary_blue}, 0.14)";
 
 if (is_global_super_admin_view()) {
-  $active_tenant_name = 'All Tenants';
-  $brand_title = 'All Tenants';
+  $active_tenant_name = $brand_title;
+  $active_scope_label = 'System Workspace';
 } elseif (current_tenant_id()) {
   $active_tenant = fetch_one(q(
     "SELECT COALESCE(display_name, tenant_name) AS tenant_name FROM tenants WHERE tenant_id=? LIMIT 1",
@@ -186,7 +187,7 @@ if (is_global_super_admin_view()) {
   <div class="profile-modal-panel">
     <?php if ($active_tenant_name): ?>
       <div class="profile-modal-tenant-block">
-        <div class="profile-modal-label">Active Tenant</div>
+        <div class="profile-modal-label"><?= htmlspecialchars($active_scope_label) ?></div>
         <div class="profile-modal-tenant"><?= htmlspecialchars($active_tenant_name) ?></div>
       </div>
     <?php endif; ?>
